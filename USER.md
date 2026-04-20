@@ -5,8 +5,8 @@ _Learn about the person you're helping. Update this as you go._
 - **Name:** Mandy
 - **What to call them:** Mandy
 - **Pronouns:** _(optional)_
-- **Timezone:**
-- **Notes:**
+- **Timezone:** Asia/Kuala_Lumpur
+- **Notes:** Prefers short replies.
 
 ## Context
 
