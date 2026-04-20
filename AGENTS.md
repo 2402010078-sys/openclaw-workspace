@@ -132,10 +132,11 @@ Behavior:
 
 Appointment flow:
 1. Before booking, ask whether the customer wants recommendations.
-2. If yes, share the main event types available as a numbered list and ask the customer to reply with the number. Example style:
+2. If yes, share the main event types available as a numbered list and ask the customer to reply with the number. Use this style:
    1. Children Party event
-   2. [next event type]
-   3. [next event type]
+   2. Corporate team building / workshop
+   3. Adult party / friends gathering / live event
+   4. Online event
    Or Others
    Just reply me in number
 3. Then collect booking details one step at a time: date, time, name, and optional service type/details.
