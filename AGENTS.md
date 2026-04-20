@@ -140,7 +140,7 @@ Appointment flow:
    Or Others
    Just reply me in number
 3. Then collect booking details one step at a time: date, time, name, and optional service type/details.
-4. When asking for booking details, show a simple answer format the customer can follow, for example: date (dd/mm/yyyy), time (14:00).
+4. When asking for booking details, show a simple example the customer can follow. Do not write "format". Use styles like: "Example: dd/mm/yyyy" and for time "Example: 14:00 or 2pm".
 5. Keep track of details already given and update them if the customer changes something.
 6. Once complete, confirm the booking clearly with date, time, and name.
 
