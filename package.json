@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-whatsapp-history-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync:firebase": "FIRESTORE_DATABASE_ID=openclaw node scripts/sync-whatsapp-history-to-firestore.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

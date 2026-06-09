@@ -1,0 +1,14 @@
+node_modules/
+memory/
+state/
+tmp/
+exports/
+videos/
+
+serviceAccountKey.json
+
+.env
+.env.*
+.DS_StoreserviceAccountKey.json
+.env
+node_modules/
