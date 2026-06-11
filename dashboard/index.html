@@ -361,6 +361,12 @@ svg{display:block;fill:currentColor}
         Chatbot
         <span class="badge" id="chatBadge">0</span>
       </div>
+      <div class="nav-item" onclick="switchPage('followup',this)">
+        <span class="icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v8m-4-4h8"/><circle cx="12" cy="12" r="10"/></svg>
+        </span>
+        跟進管理
+      </div>
     </nav>
     <div class="sidebar-footer">
       <div class="conn-status">
@@ -681,10 +687,95 @@ svg{display:block;fill:currentColor}
       <button class="btn btn-primary" id="sendChatBtn">發送</button>
     </div>
   </div>
-</div>
+      <!-- ══════ PAGE: FOLLOW-UP ══════ -->
+      <div class="page" id="pageFollowup">
+        <!-- KPI row -->
+        <div class="kpi-row" id="kpiFollowup">
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">待發送</span>
+              <span class="kpi-icon" style="background:var(--warning-bg);color:var(--warning)">📨</span>
+            </div>
+            <div class="kpi-value" id="fuPendingCount">-</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">已發送</span>
+              <span class="kpi-icon" style="background:var(--success-bg);color:var(--success)">✅</span>
+            </div>
+            <div class="kpi-value" id="fuSentCount">-</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">自動跟進</span>
+              <span class="kpi-icon" style="background:var(--accent-bg);color:var(--accent)">⚙️</span>
+            </div>
+            <div class="kpi-value" id="fuAutoStatus">-</div>
+          </div>
+        </div>
 
-<!-- ══════ TOAST ══════ -->
-<div class="toast" id="toast"></div>
+        <!-- Sub-tabs -->
+        <div class="sub-tabs">
+          <div class="sub-tab active" onclick="switchFuTab('queue',this)">📋 待發送隊列</div>
+          <div class="sub-tab" onclick="switchFuTab('history',this)">📜 已發送記錄</div>
+          <div class="sub-tab" onclick="switchFuTab('settings',this)">⚙️ 設定</div>
+        </div>
+
+        <!-- QUEUE TAB -->
+        <div id="fuQueueTab">
+          <div class="s-card">
+            <div class="s-card-header">
+              <h2>📋 待發送隊列 <span class="count" id="fuQueueCount"></span></h2>
+              <div class="s-card-actions">
+                <button class="btn btn-secondary btn-sm" onclick="loadFollowUpQueue()">🔄 更新</button>
+              </div>
+            </div>
+            <div class="s-card-body" id="fuQueueBody">
+              <div class="empty-state">
+                <div class="big-icon">📭</div>
+                <p>暫無待發送的跟進訊息</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- HISTORY TAB -->
+        <div id="fuHistoryTab" style="display:none">
+          <div class="s-card">
+            <div class="s-card-header">
+              <h2>📜 已發送記錄 <span class="count" id="fuHistoryCount"></span></h2>
+              <div class="s-card-actions">
+                <button class="btn btn-secondary btn-sm" onclick="loadFollowUpHistory()">🔄 更新</button>
+              </div>
+            </div>
+            <div class="s-card-body" id="fuHistoryBody">
+              <div class="empty-state">
+                <div class="big-icon">📭</div>
+                <p>暫無發送記錄</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div id="fuSettingsTab" style="display:none">
+          <div class="s-card">
+            <div class="s-card-header">
+              <h2>⚙️ 跟進設定</h2>
+            </div>
+            <div class="s-card-body" id="fuSettingsBody">
+              <div class="empty-state">
+                <div class="big-icon">⏳</div>
+                <p>載入設定中…</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ TOAST ══════ -->
+    <div class="toast" id="toast"></div>
 
 <script src="app.js"></script>
 </body>

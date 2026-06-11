@@ -11,6 +11,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
+import Database from 'better-sqlite3';
 
 // ============================================================
 // Configuration
@@ -49,6 +50,20 @@ const MATON_API_KEY = loadApiKey();
 
 // ============================================================
 // MIME types
+// ============================================================
+// SQLite Database (follow-up)
+// ============================================================
+const SQLITE_PATH = path.join(import.meta.dirname, '..', '..', '..', 'chatbot-dashboard', 'dashboard-laravel', 'database', 'database.sqlite');
+
+let followDb = null;
+try {
+  followDb = new Database(SQLITE_PATH, { readonly: false });
+  followDb.pragma('journal_mode = WAL');
+  console.log('   SQLite (follow-up): connected');
+} catch (e) {
+  console.warn('   WARNING: SQLite not found at', SQLITE_PATH);
+}
+
 // ============================================================
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -474,6 +489,193 @@ async function handleSaveTags(req, res) {
 }
 
 // ============================================================
+// Follow-up API handlers (SQLite)
+// ============================================================
+
+/** Read-only helper for follow-up DB queries */
+function followQuery(sql, params) {
+  if (!followDb) throw new Error('SQLite not connected');
+  const stmt = followDb.prepare(sql);
+  if (sql.trim().toUpperCase().startsWith('SELECT')) {
+    if (sql.includes('WHERE') || sql.includes('LIMIT')) {
+      return stmt.all.apply(stmt, params || []);
+    }
+    return stmt.all();
+  }
+  return stmt.run.apply(stmt, params || []);
+}
+
+/** GET /api/follow-up/queue */
+function handleGetFollowUpQueue(req, res) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const rows = followDb.prepare('SELECT * FROM follow_up_queue ORDER BY created_at DESC LIMIT 200').all();
+    json(res, 200, { ok: true, queue: rows, count: rows.length });
+  } catch (err) {
+    console.error('GET /api/follow-up/queue error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+/** GET /api/follow-up/settings */
+function handleGetFollowUpSettings(req, res) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const row = followDb.prepare('SELECT * FROM follow_up_settings LIMIT 1').get();
+    if (row && row.message_templates && typeof row.message_templates === 'string') {
+      try { row.message_templates = JSON.parse(row.message_templates); } catch {}
+    }
+    if (row && row.booked_message_templates && typeof row.booked_message_templates === 'string') {
+      try { row.booked_message_templates = JSON.parse(row.booked_message_templates); } catch {}
+    }
+    if (row && row.follow_up_sentences && typeof row.follow_up_sentences === 'string') {
+      try { row.follow_up_sentences = JSON.parse(row.follow_up_sentences); } catch {}
+    }
+    if (row && row.booked_follow_up_sentences && typeof row.booked_follow_up_sentences === 'string') {
+      try { row.booked_follow_up_sentences = JSON.parse(row.booked_follow_up_sentences); } catch {}
+    }
+    json(res, 200, { ok: true, settings: row || {} });
+  } catch (err) {
+    console.error('GET /api/follow-up/settings error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+/** GET /api/follow-up/history */
+function handleGetFollowUpHistory(req, res) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const url = new URL(req.url, 'http://localhost');
+    const date = url.searchParams.get('date');
+    let rows;
+    if (date) {
+      rows = followDb.prepare('SELECT * FROM follow_up_logs WHERE date(sent_at) = ? ORDER BY sent_at DESC LIMIT 500').all(date);
+    } else {
+      rows = followDb.prepare('SELECT * FROM follow_up_logs ORDER BY sent_at DESC LIMIT 500').all();
+    }
+    json(res, 200, { ok: true, history: rows, count: rows.length });
+  } catch (err) {
+    console.error('GET /api/follow-up/history error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+/** POST /api/follow-up/settings — Save follow-up settings */
+async function handleSaveFollowUpSettings(req, res) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const body = await parseBody(req);
+    const fields = ['interval_hours', 'booked_interval_hours', 'max_retries', 'booked_max_retries', 'work_hours_start', 'work_hours_end', 'use_work_hours_only', 'auto_follow_up_enabled'];
+    const updates = {};
+    for (const f of fields) {
+      if (body[f] !== undefined) updates[f] = body[f];
+    }
+    if (body.message_templates) updates.message_templates = JSON.stringify(body.message_templates);
+    if (body.booked_message_templates) updates.booked_message_templates = JSON.stringify(body.booked_message_templates);
+    if (body.follow_up_sentences) updates.follow_up_sentences = JSON.stringify(body.follow_up_sentences);
+    if (body.booked_follow_up_sentences) updates.booked_follow_up_sentences = JSON.stringify(body.booked_follow_up_sentences);
+
+    if (Object.keys(updates).length === 0) {
+      return jsonError(res, 400, 'No valid fields to update');
+    }
+
+    const keys = Object.keys(updates);
+    const vals = Object.values(updates).map(v => v === undefined ? null : v);
+    const setClauses = keys.map(k => k + ' = ?').join(', ');
+
+    // Check if settings row exists
+    const existing = followDb.prepare('SELECT id FROM follow_up_settings LIMIT 1').get();
+    if (existing) {
+      const stmt = followDb.prepare('UPDATE follow_up_settings SET ' + setClauses + ', updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+      stmt.run(...vals, existing.id);
+    } else {
+      const allKeys = [...keys, 'created_at', 'updated_at'];
+      const placeholders = keys.map(() => '?').concat(['CURRENT_TIMESTAMP', 'CURRENT_TIMESTAMP']);
+      const stmt = followDb.prepare('INSERT INTO follow_up_settings (' + allKeys.join(',') + ') VALUES (' + placeholders.join(',') + ')');
+      stmt.run(...vals);
+    }
+
+    json(res, 200, { ok: true });
+  } catch (err) {
+    console.error('POST /api/follow-up/settings error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+/** POST /api/follow-up/toggle */
+async function handleToggleFollowUp(req, res) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const body = await parseBody(req);
+    const enabled = body.enabled ? 1 : 0;
+    const existing = followDb.prepare('SELECT id FROM follow_up_settings LIMIT 1').get();
+    if (existing) {
+      followDb.prepare('UPDATE follow_up_settings SET auto_follow_up_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(enabled, existing.id);
+    } else {
+      followDb.prepare('INSERT INTO follow_up_settings (auto_follow_up_enabled, created_at, updated_at) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(enabled);
+    }
+    json(res, 200, { ok: true });
+  } catch (err) {
+    console.error('POST /api/follow-up/toggle error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+/** POST /api/follow-up/queue/:id/send */
+async function handleSendFollowUp(req, res, id) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const item = followDb.prepare('SELECT * FROM follow_up_queue WHERE id = ?').get(id);
+    if (!item) return jsonError(res, 404, 'Queue item not found');
+
+    // Send WhatsApp message
+    const escapedMsg = (item.suggested_message || '').replace(/"/g, '\\"');
+    const sendResult = await execCommand('openclaw', [
+      'message', 'send',
+      '--channel', 'whatsapp',
+      '--account', 'codligence',
+      '--target', String(item.customer_phone),
+      '--message', escapedMsg,
+      '--json',
+    ], { timeout: 90000 });
+
+    if (sendResult.code !== 0) {
+      console.error('Send follow-up stderr:', sendResult.stderr);
+      return jsonError(res, 500, sendResult.stderr.trim() || 'Failed to send message');
+    }
+
+    // Update queue status
+    followDb.prepare("UPDATE follow_up_queue SET status = 'sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+
+    // Insert into follow_up_logs
+    followDb.prepare(
+      "INSERT INTO follow_up_logs (customer_phone, customer_name, trigger_reason, message_sent, sent_at, is_replied, retry_count, status, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 0, 0, 'sent', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+    ).run(item.customer_phone, item.customer_name || '', item.trigger_reason, item.suggested_message || '');
+
+    json(res, 200, { ok: true, item: { ...item, status: 'sent' } });
+  } catch (err) {
+    console.error('POST /api/follow-up/queue/send error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+/** POST /api/follow-up/queue/:id/ignore */
+function handleIgnoreFollowUp(req, res, id) {
+  try {
+    if (!followDb) return jsonError(res, 503, 'SQLite not available');
+    const item = followDb.prepare('SELECT * FROM follow_up_queue WHERE id = ?').get(id);
+    if (!item) return jsonError(res, 404, 'Queue item not found');
+
+    followDb.prepare("UPDATE follow_up_queue SET status = 'ignored', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+
+    json(res, 200, { ok: true, item: { ...item, status: 'ignored' } });
+  } catch (err) {
+    console.error('POST /api/follow-up/queue/ignore error:', err);
+    jsonError(res, 500, err.message);
+  }
+}
+
+// ============================================================
 // Static file server
 // ============================================================
 function serveStatic(req, res) {
@@ -571,6 +773,39 @@ async function handleRequest(req, res) {
 
     if (req.method === 'POST' && pathname === '/api/tags') {
       return await handleSaveTags(req, res);
+    }
+
+    // Follow-up API routes
+    if (req.method === 'GET' && pathname === '/api/follow-up/queue') {
+      return handleGetFollowUpQueue(req, res);
+    }
+
+    if (req.method === 'GET' && pathname === '/api/follow-up/settings') {
+      return handleGetFollowUpSettings(req, res);
+    }
+
+    if (req.method === 'GET' && pathname === '/api/follow-up/history') {
+      return handleGetFollowUpHistory(req, res);
+    }
+
+    if (req.method === 'POST' && pathname === '/api/follow-up/settings') {
+      return await handleSaveFollowUpSettings(req, res);
+    }
+
+    if (req.method === 'POST' && pathname === '/api/follow-up/toggle') {
+      return await handleToggleFollowUp(req, res);
+    }
+
+    // Dynamic routes: /api/follow-up/queue/{id}/send
+    if (req.method === 'POST') {
+      const sendMatch = pathname.match(/^\/api\/follow-up\/queue\/(\d+)\/send$/);
+      if (sendMatch) {
+        return await handleSendFollowUp(req, res, parseInt(sendMatch[1], 10));
+      }
+      const ignoreMatch = pathname.match(/^\/api\/follow-up\/queue\/(\d+)\/ignore$/);
+      if (ignoreMatch) {
+        return handleIgnoreFollowUp(req, res, parseInt(ignoreMatch[1], 10));
+      }
     }
 
     // Fallback: serve static file

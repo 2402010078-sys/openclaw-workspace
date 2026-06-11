@@ -1061,6 +1061,11 @@ function switchPage(page, navEl) {
   if (sidebar && window.innerWidth <= 768) {
     sidebar.classList.remove('open');
   }
+  
+  // Auto-load follow-up data when entering follow-up page
+  if (page === 'followup') {
+    loadFollowUpQueue();
+  }
 }
 
 function toggleSidebar() {
@@ -1072,6 +1077,260 @@ function toggleSidebar() {
 // 暴露所有需要在 HTML onclick 中调用的函数到全局作用域
 // ============================================================
 
+// ═══════════════════════════════════════════════
+// FOLLOW-UP MANAGEMENT
+// ═══════════════════════════════════════════════
+
+let activeFuTab = 'queue';
+
+function switchFuTab(tab, el) {
+  activeFuTab = tab;
+  document.querySelectorAll('#pageFollowup .sub-tab').forEach(function(t) { t.classList.remove('active'); });
+  if (el) el.classList.add('active');
+  ['fuQueueTab', 'fuHistoryTab', 'fuSettingsTab'].forEach(function(id) {
+    document.getElementById(id).style.display = (id === 'fu' + tab.charAt(0).toUpperCase() + tab.slice(1) + 'Tab') ? '' : 'none';
+  });
+  if (tab === 'queue' && !document.getElementById('fuQueueBody').querySelector('.c-row')) {
+    loadFollowUpQueue();
+  } else if (tab === 'history') {
+    loadFollowUpHistory();
+  } else if (tab === 'settings') {
+    loadFollowUpSettings();
+  }
+}
+
+async function loadFollowUpQueue() {
+  var body = document.getElementById('fuQueueBody');
+  body.innerHTML = '<div class="empty-state"><div class="big-icon">⏳</div><p>載入中…</p></div>';
+  try {
+    var r = await fetch('/api/follow-up/queue');
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Failed');
+    var items = d.queue || [];
+    var pending = items.filter(function(i) { return i.status === 'pending'; });
+    var sent = items.filter(function(i) { return i.status === 'sent'; });
+    document.getElementById('fuPendingCount').textContent = pending.length;
+    document.getElementById('fuSentCount').textContent = sent.length;
+    document.getElementById('fuQueueCount').textContent = '(' + pending.length + ')';
+    if (pending.length === 0) {
+      body.innerHTML = '<div class="empty-state"><div class="big-icon">📭</div><p>暫無待發送的跟進訊息 🎉</p></div>';
+      return;
+    }
+    var h = '';
+    pending.forEach(function(item) {
+      var scheduled = item.scheduled_at ? new Date(item.scheduled_at + 'Z').toLocaleString('zh-TW', { timeZone: 'Asia/Kuala_Lumpur', hour12: false }) : '-';
+      var triggerLabel = item.trigger_reason === 'inactive' ? '⚪ 靜默客戶' : item.trigger_reason === 'booked_reminder' ? '🔵 已預約提醒' : item.trigger_reason || '其他';
+      h += '<div class="c-row">';
+      h += '<div class="c-avatar" style="background:' + (item.trigger_reason === 'booked_reminder' ? '#10b981' : '#f59e0b') + '">' + (item.customer_name ? item.customer_name.charAt(0).toUpperCase() : '?') + '</div>';
+      h += '<div class="c-info">';
+      h += '<div class="c-name">' + escapeHtml(item.customer_name || 'Unknown') + ' <span class="c-platform">' + escapeHtml(item.customer_phone || '') + '</span></div>';
+      h += '<div class="c-preview">' + escapeHtml(item.suggested_message || '').slice(0, 80) + (item.suggested_message && item.suggested_message.length > 80 ? '…' : '') + '</div>';
+      h += '<div class="c-booking">' + triggerLabel + ' · 排程: ' + scheduled + '</div>';
+      h += '</div>';
+      h += '<div class="c-meta" style="display:flex;gap:4px;flex-wrap:nowrap">';
+      h += '<button class="btn btn-primary btn-sm" onclick="sendFollowUp(' + item.id + ')" title="立即發送">📨 發送</button>';
+      h += '<button class="btn btn-ghost btn-sm" onclick="ignoreFollowUp(' + item.id + ')" title="略過">⏭ 略過</button>';
+      h += '</div>';
+      h += '</div>';
+    });
+    body.innerHTML = h;
+  } catch (e) {
+    body.innerHTML = '<div class="empty-state"><div class="big-icon">❌</div><p>載入失敗: ' + escapeHtml(e.message) + '</p></div>';
+  }
+}
+
+async function loadFollowUpHistory() {
+  var body = document.getElementById('fuHistoryBody');
+  var countEl = document.getElementById('fuHistoryCount');
+  body.innerHTML = '<div class="empty-state"><div class="big-icon">⏳</div><p>載入中…</p></div>';
+  try {
+    var r = await fetch('/api/follow-up/history');
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Failed');
+    var items = d.history || [];
+    countEl.textContent = '(' + items.length + ')';
+    if (items.length === 0) {
+      body.innerHTML = '<div class="empty-state"><div class="big-icon">📭</div><p>暫無發送記錄</p></div>';
+      return;
+    }
+    var h = '<div class="table-wrap"><table class="data-table"><thead><tr><th>時間</th><th>客戶</th><th>電話</th><th>類型</th><th>內容</th><th>狀態</th></tr></thead><tbody>';
+    items.slice(0, 100).forEach(function(item) {
+      var sentAt = item.sent_at ? new Date(item.sent_at + 'Z').toLocaleString('zh-TW', { timeZone: 'Asia/Kuala_Lumpur', hour12: false }) : '-';
+      var triggerLabel = item.trigger_reason === 'inactive' ? '靜默客戶' : item.trigger_reason === 'booked_reminder' ? '已預約提醒' : item.trigger_reason || '其他';
+      var statusHtml = item.is_replied ? '<span class="badge-st confirmed">已回覆</span>' : '<span class="badge-st" style="background:var(--bg-input);color:var(--text-secondary)">未回覆</span>';
+      h += '<tr>';
+      h += '<td style="white-space:nowrap">' + sentAt + '</td>';
+      h += '<td>' + escapeHtml(item.customer_name || '-') + '</td>';
+      h += '<td>' + escapeHtml(item.customer_phone || '') + '</td>';
+      h += '<td>' + triggerLabel + '</td>';
+      h += '<td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(item.message_sent || '').slice(0, 60) + '</td>';
+      h += '<td>' + statusHtml + '</td>';
+      h += '</tr>';
+    });
+    h += '</tbody></table></div>';
+    body.innerHTML = h;
+  } catch (e) {
+    body.innerHTML = '<div class="empty-state"><div class="big-icon">❌</div><p>載入失敗: ' + escapeHtml(e.message) + '</p></div>';
+  }
+}
+
+async function loadFollowUpSettings() {
+  var body = document.getElementById('fuSettingsBody');
+  body.innerHTML = '<div class="empty-state"><div class="big-icon">⏳</div><p>載入中…</p></div>';
+  try {
+    var r = await fetch('/api/follow-up/settings');
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Failed');
+    var s = d.settings || {};
+    var isEnabled = s.auto_follow_up_enabled == 1 || s.auto_follow_up_enabled === true;
+    document.getElementById('fuAutoStatus').textContent = isEnabled ? '🟢 已啟用' : '🔴 已停用';
+    var sentences = Array.isArray(s.follow_up_sentences) ? s.follow_up_sentences : [];
+    var bookedSentences = Array.isArray(s.booked_follow_up_sentences) ? s.booked_follow_up_sentences : [];
+    var templates = s.message_templates || {};
+    var bookedTemplates = s.booked_message_templates || {};
+
+    var h = '';
+    h += '<div style="display:grid;gap:16px">';
+
+    // Auto follow-up toggle
+    h += '<div class="s-card" style="box-shadow:none;border:1px solid var(--border);padding:16px;border-radius:var(--radius)">';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between">';
+    h += '<div><strong>自動跟進</strong><div style="font-size:12px;color:var(--text-secondary);margin-top:2px">啟用後系統會自動在排程時間發送跟進訊息</div></div>';
+    h += '<label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">';
+    h += '<input type="checkbox" ' + (isEnabled ? 'checked' : '') + ' onchange="toggleAutoFollowUp(this.checked)" style="opacity:0;width:0;height:0">';
+    h += '<span style="position:absolute;inset:0;background:' + (isEnabled ? 'var(--accent)' : '#ccc') + ';border-radius:12px;transition:.2s"></span>';
+    h += '<span style="position:absolute;top:2px;left:' + (isEnabled ? '22px' : '2px') + ';width:20px;height:20px;background:#fff;border-radius:50%;transition:.2s"></span>';
+    h += '</label></div></div>';
+
+    // Interval settings
+    h += '<div class="s-card" style="box-shadow:none;border:1px solid var(--border);padding:16px;border-radius:var(--radius)">';
+    h += '<strong style="display:block;margin-bottom:8px">間隔設定</strong>';
+    h += '<div class="form-group"><label>靜默客戶跟進間隔 (小時)</label><input type="number" id="fuInterval" value="' + (s.interval_hours || 24) + '" class="search-input" style="width:120px"></div>';
+    h += '<div class="form-group"><label>已預約跟進間隔 (小時)</label><input type="number" id="fuBookedInterval" value="' + (s.booked_interval_hours || 48) + '" class="search-input" style="width:120px"></div>';
+    h += '<div class="form-group"><label>最大重試次數</label><input type="number" id="fuMaxRetries" value="' + (s.max_retries || 3) + '" class="search-input" style="width:120px"></div>';
+    h += '</div>';
+
+    // Templates - inactive
+    h += '<div class="s-card" style="box-shadow:none;border:1px solid var(--border);padding:16px;border-radius:var(--radius)">';
+    h += '<strong style="display:block;margin-bottom:8px">靜默客戶訊息範本</strong>';
+    h += '<div class="form-group"><label>固定範本</label><textarea id="fuInactiveTemplate" class="search-input" rows="2">' + escapeHtml(templates.inactive || '') + '</textarea></div>';
+    h += '<div class="form-group"><label>輪換句子 (每行一句)</label><textarea id="fuSentences" class="search-input" rows="4">' + escapeHtml(sentences.join('\n')) + '</textarea></div>';
+    h += '</div>';
+
+    // Templates - booked
+    h += '<div class="s-card" style="box-shadow:none;border:1px solid var(--border);padding:16px;border-radius:var(--radius)">';
+    h += '<strong style="display:block;margin-bottom:8px">已預約客戶訊息範本</strong>';
+    h += '<div class="form-group"><label>固定範本</label><textarea id="fuBookedTemplate" class="search-input" rows="2">' + escapeHtml(bookedTemplates.reminder || '') + '</textarea></div>';
+    h += '<div class="form-group"><label>輪換句子 (每行一句)</label><textarea id="fuBookedSentences" class="search-input" rows="4">' + escapeHtml(bookedSentences.join('\n')) + '</textarea></div>';
+    h += '</div>';
+
+    // Work hours
+    h += '<div class="s-card" style="box-shadow:none;border:1px solid var(--border);padding:16px;border-radius:var(--radius)">';
+    h += '<strong style="display:block;margin-bottom:8px">工作時段</strong>';
+    h += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    h += '<div class="form-group" style="flex:1;min-width:100px"><label>開始</label><input type="time" id="fuWorkStart" value="' + (s.work_hours_start || '09:00') + '" class="search-input"></div>';
+    h += '<div class="form-group" style="flex:1;min-width:100px"><label>結束</label><input type="time" id="fuWorkEnd" value="' + (s.work_hours_end || '18:00') + '" class="search-input"></div>';
+    h += '</div>';
+    h += '<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:8px"><input type="checkbox" id="fuWorkHoursOnly" ' + (s.use_work_hours_only ? 'checked' : '') + '> 僅在工作時段內發送</label>';
+    h += '</div>';
+
+    // Save button
+    h += '<button class="btn btn-primary" onclick="saveFollowUpSettings()">💾 儲存設定</button>';
+    h += '</div>';
+    body.innerHTML = h;
+  } catch (e) {
+    body.innerHTML = '<div class="empty-state"><div class="big-icon">❌</div><p>載入失敗: ' + escapeHtml(e.message) + '</p></div>';
+  }
+}
+
+async function toggleAutoFollowUp(enabled) {
+  try {
+    await fetch('/api/follow-up/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    });
+    showToast(enabled ? '自動跟進已開啟' : '自動跟進已關閉', 'success');
+    loadFollowUpSettings();
+  } catch (e) {
+    showToast('切換失敗: ' + e.message, 'error');
+  }
+}
+
+async function saveFollowUpSettings() {
+  var interval = parseInt(document.getElementById('fuInterval')?.value || '24', 10);
+  var bookedInterval = parseInt(document.getElementById('fuBookedInterval')?.value || '48', 10);
+  var maxRetries = parseInt(document.getElementById('fuMaxRetries')?.value || '3', 10);
+  var workStart = document.getElementById('fuWorkStart')?.value || '09:00';
+  var workEnd = document.getElementById('fuWorkEnd')?.value || '18:00';
+  var workOnly = document.getElementById('fuWorkHoursOnly')?.checked || false;
+  var inactTemplate = document.getElementById('fuInactiveTemplate')?.value || '';
+  var bookedTemplate = document.getElementById('fuBookedTemplate')?.value || '';
+  var sentences = (document.getElementById('fuSentences')?.value || '').split('\n').filter(Boolean);
+  var bookedSentences = (document.getElementById('fuBookedSentences')?.value || '').split('\n').filter(Boolean);
+
+  try {
+    var r = await fetch('/api/follow-up/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        interval_hours: interval,
+        booked_interval_hours: bookedInterval,
+        max_retries: maxRetries,
+        work_hours_start: workStart,
+        work_hours_end: workEnd,
+        use_work_hours_only: workOnly,
+        message_templates: { inactive: inactTemplate },
+        booked_message_templates: { reminder: bookedTemplate },
+        follow_up_sentences: sentences,
+        booked_follow_up_sentences: bookedSentences
+      })
+    });
+    var d = await r.json();
+    if (d.ok) {
+      showToast('設定已儲存 ✅', 'success');
+      loadFollowUpSettings();
+    } else {
+      showToast('儲存失敗: ' + (d.error || '未知錯誤'), 'error');
+    }
+  } catch (e) {
+    showToast('儲存失敗: ' + e.message, 'error');
+  }
+}
+
+async function sendFollowUp(id) {
+  try {
+    var r = await fetch('/api/follow-up/queue/' + id + '/send', { method: 'POST' });
+    var d = await r.json();
+    if (d.ok) {
+      showToast('訊息已發送 ✅', 'success');
+      loadFollowUpQueue();
+    } else {
+      showToast('發送失敗: ' + (d.error || '未知錯誤'), 'error');
+    }
+  } catch (e) {
+    showToast('發送失敗: ' + e.message, 'error');
+  }
+}
+
+async function ignoreFollowUp(id) {
+  try {
+    var r = await fetch('/api/follow-up/queue/' + id + '/ignore', { method: 'POST' });
+    var d = await r.json();
+    if (d.ok) {
+      showToast('已略過 ⏭', 'success');
+      loadFollowUpQueue();
+    } else {
+      showToast('略過失敗: ' + (d.error || '未知錯誤'), 'error');
+    }
+  } catch (e) {
+    showToast('略過失敗: ' + e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════
 window.switchPage = switchPage;
 window.toggleSidebar = toggleSidebar;
 window.openBookingModal = openBookingModal;
@@ -1089,3 +1348,11 @@ window.closeChatModal = closeChatModal;
 window.refreshAll = refreshAll;
 window.addTag = addTag;
 window.removeTag = removeTag;
+window.switchFuTab = switchFuTab;
+window.loadFollowUpQueue = loadFollowUpQueue;
+window.loadFollowUpHistory = loadFollowUpHistory;
+window.loadFollowUpSettings = loadFollowUpSettings;
+window.toggleAutoFollowUp = toggleAutoFollowUp;
+window.saveFollowUpSettings = saveFollowUpSettings;
+window.sendFollowUp = sendFollowUp;
+window.ignoreFollowUp = ignoreFollowUp;
