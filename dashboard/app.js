@@ -1065,6 +1065,7 @@ function switchPage(page, navEl) {
   // Auto-load follow-up data when entering follow-up page
   if (page === 'followup') {
     loadFollowUpQueue();
+    if (document.getElementById('fuSettingsBody')) loadFollowUpSettings();
   }
 }
 
@@ -1108,29 +1109,34 @@ async function loadFollowUpQueue() {
     if (!d.ok) throw new Error(d.error || 'Failed');
     var items = d.queue || [];
     var pending = items.filter(function(i) { return i.status === 'pending'; });
-    var sent = items.filter(function(i) { return i.status === 'sent'; });
+    var sentItems = items.filter(function(i) { return i.status === 'sent'; });
     document.getElementById('fuPendingCount').textContent = pending.length;
-    document.getElementById('fuSentCount').textContent = sent.length;
-    document.getElementById('fuQueueCount').textContent = '(' + pending.length + ')';
-    if (pending.length === 0) {
-      body.innerHTML = '<div class="empty-state"><div class="big-icon">📭</div><p>暫無待發送的跟進訊息 🎉</p></div>';
+    document.getElementById('fuSentCount').textContent = sentItems.length;
+    document.getElementById('fuQueueCount').textContent = '(' + items.length + ')';
+    if (items.length === 0) {
+      body.innerHTML = '<div class="empty-state"><div class="big-icon">📭</div><p>暫無跟進記錄</p></div>';
       return;
     }
     var h = '';
-    pending.forEach(function(item) {
+    items.forEach(function(item) {
       var scheduled = item.scheduled_at ? new Date(item.scheduled_at + 'Z').toLocaleString('zh-TW', { timeZone: 'Asia/Kuala_Lumpur', hour12: false }) : '-';
       var triggerLabel = item.trigger_reason === 'inactive' ? '⚪ 靜默客戶' : item.trigger_reason === 'booked_reminder' ? '🔵 已預約提醒' : item.trigger_reason || '其他';
-      h += '<div class="c-row">';
+      var isSent = item.status === 'sent';
+      var isIgnored = item.status === 'ignored';
+      var statusBadge = isSent ? '<span class="badge-st" style="background:var(--bg-input);color:var(--text-secondary);font-size:10px;padding:0 6px;border-radius:4px">已發送</span>' : isIgnored ? '<span class="badge-st" style="background:var(--danger-bg);color:var(--danger);font-size:10px;padding:0 6px;border-radius:4px">已略過</span>' : '<span class="badge-st" style="background:var(--warning-bg);color:var(--warning);font-size:10px;padding:0 6px;border-radius:4px">待發送</span>';
+      h += '<div class="c-row" style="opacity:' + (isSent || isIgnored ? '0.6' : '1') + '">';
       h += '<div class="c-avatar" style="background:' + (item.trigger_reason === 'booked_reminder' ? '#10b981' : '#f59e0b') + '">' + (item.customer_name ? item.customer_name.charAt(0).toUpperCase() : '?') + '</div>';
       h += '<div class="c-info">';
-      h += '<div class="c-name">' + escapeHtml(item.customer_name || 'Unknown') + ' <span class="c-platform">' + escapeHtml(item.customer_phone || '') + '</span></div>';
+      h += '<div class="c-name">' + escapeHtml(item.customer_name || 'Unknown') + ' <span class="c-platform">' + escapeHtml(item.customer_phone || '') + '</span> ' + statusBadge + '</div>';
       h += '<div class="c-preview">' + escapeHtml(item.suggested_message || '').slice(0, 80) + (item.suggested_message && item.suggested_message.length > 80 ? '…' : '') + '</div>';
       h += '<div class="c-booking">' + triggerLabel + ' · 排程: ' + scheduled + '</div>';
       h += '</div>';
-      h += '<div class="c-meta" style="display:flex;gap:4px;flex-wrap:nowrap">';
-      h += '<button class="btn btn-primary btn-sm" onclick="sendFollowUp(' + item.id + ')" title="立即發送">📨 發送</button>';
-      h += '<button class="btn btn-ghost btn-sm" onclick="ignoreFollowUp(' + item.id + ')" title="略過">⏭ 略過</button>';
-      h += '</div>';
+      if (!isSent && !isIgnored) {
+        h += '<div class="c-meta" style="display:flex;gap:4px;flex-wrap:nowrap">';
+        h += '<button class="btn btn-primary btn-sm" onclick="sendFollowUp(' + item.id + ')" title="立即發送">📨 發送</button>';
+        h += '<button class="btn btn-ghost btn-sm" onclick="ignoreFollowUp(' + item.id + ')" title="略過">⏭ 略過</button>';
+        h += '</div>';
+      }
       h += '</div>';
     });
     body.innerHTML = h;
