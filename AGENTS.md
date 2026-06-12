@@ -146,9 +146,9 @@ For Telegram direct chats to the business bot, use the same booking behavior and
 
 **Every single message exchange with a customer MUST be logged to the ChatBot Conversation Logs spreadsheet.**
 
-### 📝 雙重寫入：Google Sheets + SQLite (Dashboard)
+### 📝 三重寫入：Google Sheets + SQLite (Dashboard) + SQLite Bookings Table
 
-**每次回覆客戶後，你必須同時寫入兩個地方：**
+**每次回覆客戶後，你必須同時寫入三個地方（每則消息寫方法一+二，成功 booking 加寫方法三）：**
 
 **方法一：呼叫 webhook 寫入 SQLite（Dashboard 即時更新）**
 用 `exec` 執行 curl 到 Laravel dashboard 的 webhook 端點：
@@ -178,7 +178,14 @@ node /Users/macmini/.openclaw/workspace/tools/conversation-log.mjs log \
   [--note "..."]
 ```
 
-**兩種方法都要做，缺一不可！** webhook 讓 dashboard 即時更新，conversation-log.mjs 讓 Google Sheets 有備份。
+webhook 讓 dashboard 即時更新，conversation-log.mjs log 讓 Google Sheets 有備份，conversation-log.mjs sync-booking 讓 dashboard 的 bookings 頁面同步。
+
+> **⚠️ 啟動 Dashboard：** 如果 Laravel dashboard 沒有在跑，curl 會連線失敗。執行以下指令啟動：
+> ```bash
+> cd /Users/macmini/chatbot-dashboard/dashboard-laravel
+> nohup php artisan serve --port=4567 > /dev/null 2>&1 &
+> ```
+> 用 `ps aux | grep artisan` 確認它在運行。
 
 Intent types (pick the closest one):
 - `opening` — customer says hi/hello for the first time
@@ -305,7 +312,7 @@ After the customer picks a slot or range:
   - Customer name if needed
 
 Before saving:
-- Re-check that the selected slot, or every slot in the selected range, is still available in the correct month tab.
+- Re-check that the selected slot, or every slot in the selected range, is still available in the All Bookings tab.
 - Use `node /Users/macmini/.openclaw/workspace/tools/google-sheets-booking.mjs check --date DD/MM/YYYY` again before writing if needed.
 
 If any selected slot has become unavailable, reply exactly:
@@ -318,11 +325,7 @@ After confirmation:
 - The script automatically writes one row and checks availability before writing.
 - Never send the success message unless the script returns `"ok": true`.
 
-### 📝 三重寫入：Google Sheets + SQLite (Dashboard) + SQLite Bookings Table
-
-**每次成功 booking 後，除了原本的 log 寫入，還必須同步 booking 資料到 SQLite bookings table：**
-
-**方法三：呼叫 conversation-log.mjs sync-booking 寫入 SQLite bookings table**
+**方法三：呼叫 conversation-log.mjs sync-booking 寫入 SQLite bookings table（僅 booking 成功後）**
 ```
 node /Users/macmini/.openclaw/workspace/tools/conversation-log.mjs sync-booking \
   --date "DD/MM/YYYY" \
@@ -340,9 +343,6 @@ node /Users/macmini/.openclaw/workspace/tools/conversation-log.mjs sync-booking 
 bookingId 要從 `google-sheets-booking.mjs book` 回傳的結果中取得（如果有回傳 bookingId 的話）。
 
 **三種方法都要做，缺一不可！**
-1. ✅ 方法一：curl 到 webhook (log-message) — Dashboard 聊天記錄
-2. ✅ 方法二：conversation-log.mjs log — Google Sheets 備份
-3. ✅ 方法三：conversation-log.mjs sync-booking — SQLite bookings table
 
 After a successful save, reply exactly:
 
@@ -370,7 +370,11 @@ After a successful save, reply exactly:
 - Always check availability before confirming or saving.
 - Keep responses short, clear, and professional.
 - If the customer wants to reschedule, ask only for the updated missing detail.
+  - Use `--id B00X` to edit an existing booking: `node /Users/macmini/.openclaw/workspace/tools/google-sheets-booking.mjs book --id B00X --date DD/MM/YYYY --time H:00-H:00 --eventType "..." --guests N --location "..."`
+  - Then update booking in SQLite via the same sync-booking webhook.
 - If the customer wants to cancel, reply exactly: `No problem 👍 Your appointment has been cancelled.`
+  - Then update Google Sheets status via: `node /Users/macmini/.openclaw/workspace/tools/google-sheets-booking.mjs book --id B00X --date ... --time ... --eventType "..." --guests N --location "..." --status "cancelled"`
+  - And delete booking from SQLite: `node /Users/macmini/.openclaw/workspace/tools/conversation-log.mjs delete-booking --bookingId "B00X"`
 - If the message is unclear or the required structure is missing, reply exactly: `Sorry, I didn’t quite get that 😅 Could you please follow the format?`
 - Do not over-explain.
 
