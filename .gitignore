@@ -7,7 +7,6 @@ videos/
 
 serviceAccountKey.json
 
-.env
-.env.*
 
 .DS_Store
+config.bat
